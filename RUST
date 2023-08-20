@@ -1,0 +1,1303 @@
+//var Color = importNamespace('PixelCombats.ScriptingApi.Structures');
+
+//var System = importNamespace('System');
+
+
+
+// константы
+
+var WaitingPlayersTime = 5;
+
+var BuildBaseTime = 2;
+
+var GameModeTime = 7;
+
+var EndOfMatchTime = 5;
+
+
+
+// константы имен
+
+var WaitingStateValue = "Waiting";
+
+var BuildModeStateValue = "BuildMode";
+
+var GameStateValue = "Game";
+
+var EndOfMatchStateValue = "EndOfMatch";
+
+
+
+// посто€нные переменные
+
+var mainTimer = Timers.GetContext().Get("Main");
+
+var stateProp = Properties.GetContext().Get("State");
+
+
+
+// примен€ем параметры создани€ комнаты
+
+Damage.FriendlyFire = GameMode.Parameters.GetBool("FriendlyFire");
+
+Map.Rotation = GameMode.Parameters.GetBool("MapRotation");
+
+BreackGraph.OnlyPlayerBlocksDmg = GameMode.Parameters.GetBool("PartialDesruction");
+
+BreackGraph.WeakBlocks = GameMode.Parameters.GetBool("LoosenBlocks");
+
+
+
+// блок игрока всегда усилен
+
+BreackGraph.PlayerBlockBoost = true;
+
+
+
+// параметры игры
+
+Properties.GetContext().GameModeName.Value = "GameModes/Team Dead Match";
+
+TeamsBalancer.IsAutoBalance = false;
+
+Ui.GetContext().MainTimerId.Value = mainTimer.Id;
+
+// создаем команды
+
+Teams.Add("Blue", "<color=orange><b><i>СПАВН ПУСТНЫНЯ</i></b></color>", { r: 30 });
+
+Teams.Add("Red", "<color=lime><b><i>СПАВН ЛЕС</i></b></color>", { g: 120 });
+
+var blueTeam = Teams.Get("Blue");
+
+var redTeam = Teams.Get("Red");
+
+blueTeam.Spawns.SpawnPointsGroups.Add(1);
+
+redTeam.Spawns.SpawnPointsGroups.Add(2);
+
+blueTeam.Build.BlocksSet.Value = BuildBlocksSet.Blue;
+
+redTeam.Build.BlocksSet.Value = BuildBlocksSet.Red;
+
+
+
+// задаем макс смертей команд
+
+var maxDeaths = Players.MaxCount * 10000000;
+
+Teams.Get("Red").Properties.Get("Deaths").Value = maxDeaths;
+
+Teams.Get("Blue").Properties.Get("Deaths").Value = maxDeaths;
+
+// задаем что выводить в лидербордах
+
+LeaderBoard.PlayerLeaderBoardValues = [
+
+	{
+
+		Value: "Kills",
+
+		DisplayName: "<color=brown><i><b>ДЕРЕВО</b></i></color>",
+
+		ShortDisplayName: "<color=brown><i><b>ДЕРЕВО</b></i></color>"
+
+	},
+
+	{
+
+		Value: "Deaths",
+
+		DisplayName: "<b>КАМЕНЬ</B>",
+
+		ShortDisplayName: "<color=grey><i><b>КАМЕНЬ</B></i></color>"
+
+	},
+
+	{
+
+		Value: "Spawns",
+
+		DisplayName: "<b>ЖЕЛЕЗО</B>",
+
+		ShortDisplayName: "<i><b>ЖЕЛЕЗО</B></i>"
+
+	},
+
+	{
+
+		Value: "Scores",
+
+		DisplayName: "<b>лвл верстака</B>",
+
+		ShortDisplayName: "<b>лвл верстака</B>"
+
+	},
+
+];
+
+LeaderBoard.TeamLeaderBoardValue = {
+
+	Value: "Deaths",
+
+	DisplayName: "<B>ты СДОХ</B>",
+
+	ShortDisplayName: "<B>ты СДОХ</B>"
+
+};
+
+// вес команды в лидерборде
+
+LeaderBoard.TeamWeightGetter.Set(function(team) {
+
+	return team.Properties.Get("Deaths").Value;
+
+});
+
+// вес игрока в лидерборде
+
+LeaderBoard.PlayersWeightGetter.Set(function(player) {
+
+	return player.Properties.Get("Kills").Value;
+
+});
+
+
+
+// задаем что выводить вверху
+
+Ui.GetContext().TeamProp1.Value = { Team: "Blue", Prop: "Deaths" };
+
+Ui.GetContext().TeamProp2.Value = { Team: "Red", Prop: "Deaths" };
+
+
+
+// разрешаем вход в команды по запросу
+
+Teams.OnRequestJoinTeam.Add(function(player,team){team.Add(player);});
+
+// спавн по входу в команду
+
+Teams.OnPlayerChangeTeam.Add(function(player){ player.Spawns.Spawn()});
+
+
+
+// делаем игроков неу€звимыми после спавна
+
+var immortalityTimerName="immortality";
+
+Spawns.GetContext().OnSpawn.Add(function(player){
+
+	player.Properties.Immortality.Value=true;
+
+	timer=player.Timers.Get(immortalityTimerName).Restart(1);
+
+});
+
+Timers.OnPlayerTimer.Add(function(timer){
+
+	if(timer.Id!=immortalityTimerName) return;
+
+	timer.Player.Properties.Immortality.Value=false;
+
+});
+
+
+
+// после каждой смерти игрока отнимаем одну смерть в команде
+
+Properties.OnPlayerProperty.Add(function(context, value) {
+
+	if (value.Name !== "Deaths") return;
+
+	if (context.Player.Team == null) return;
+
+
+
+	context.Player.Team.Properties.Get("Deaths").Value--;
+
+});
+
+// если в команде количество смертей занулилось то завершаем игру
+
+Properties.OnTeamProperty.Add(function(context, value) {
+
+	if (value.Name !== "Deaths") return;
+
+	if (value.Value <= 0) SetEndOfMatchMode();
+
+});
+
+
+
+// счетчик спавнов
+
+Spawns.OnSpawn.Add(function(player) {
+
+	++player.Properties.Spawns.Value;
+
+});
+
+// счетчик смертей
+
+Damage.OnDeath.Add(function(player) {
+
+	++player.Properties.Deaths.Value;
+
+});
+
+// счетчик убийств
+
+Damage.OnKill.Add(function(player, killed) {
+
+	if (killed.Team != null && killed.Team != player.Team) {
+
+		++player.Properties.Kills.Value;
+
+		player.Properties.Scores.Value += 0;
+
+	}
+
+});
+
+
+
+// настройка переключени€ режимов
+
+mainTimer.OnTimer.Add(function() {
+
+	switch (stateProp.Value) {
+
+	case WaitingStateValue:
+
+		SetBuildMode();
+
+		break;
+
+	case BuildModeStateValue:
+
+		SetGameMode();
+
+		break;
+
+	case GameStateValue:
+
+		SetEndOfMatchMode();
+
+		break;
+
+	case EndOfMatchStateValue:
+
+		RestartGame();
+
+		break;
+
+	}
+
+});
+
+
+
+// задаем первое игровое состо€ние
+
+SetWaitingMode();
+
+
+
+// состо€ни€ игры
+
+function SetWaitingMode() {
+
+	stateProp.Value = WaitingStateValue;
+
+	Ui.GetContext().Hint.Value = "Hint/WaitingPlayers";
+
+	Spawns.GetContext().enable = false;
+
+	mainTimer.Restart(WaitingPlayersTime);
+
+}
+
+
+
+function SetBuildMode() 
+
+{
+
+	stateProp.Value = BuildModeStateValue;
+
+	Ui.GetContext().Hint.Value = "Hint/BuildBase";
+
+	var inventory = Inventory.GetContext();
+
+	inventory.Main.Value = false;
+
+	inventory.Secondary.Value = false;
+
+	inventory.Melee.Value = true;
+
+	inventory.Explosive.Value = false;
+
+	inventory.Build.Value = true;
+
+inventory.BuildInfinity.Value = true;
+
+
+
+	mainTimer.Restart(BuildBaseTime);
+
+	Spawns.GetContext().enable = true;
+
+	SpawnTeams();
+
+}
+
+function SetGameMode() 
+
+{
+
+	stateProp.Value = GameStateValue;
+
+	Ui.GetContext().Hint.Value = "НАЧИНАЙ ВЫЖИВАТЬ, ВАЙП ЧЕРЕЗ  2 ЧАСA!";
+
+
+
+	var inventory = Inventory.GetContext();
+
+	if (GameMode.Parameters.GetBool("OnlyKnives")) {
+
+		inventory.Main.Value = false;
+
+		inventory.Secondary.Value = false;
+
+		inventory.Melee.Value = true;
+
+		inventory.Explosive.Value = false;
+
+		inventory.Build.Value = false;
+
+	} else {
+
+		inventory.Main.Value = false;
+
+		inventory.Secondary.Value = false;
+
+		inventory.Melee.Value = true;
+
+		inventory.Explosive.Value = false;
+
+		inventory.Build.Value = false;
+
+	}
+
+
+
+	mainTimer.Restart(GameModeTime);
+
+	Spawns.GetContext().Despawn();
+
+	SpawnTeams();
+
+}
+
+function SetEndOfMatchMode() {
+
+	stateProp.Value = EndOfMatchStateValue;
+
+	Ui.GetContext().Hint.Value = "Hint/EndOfMatch";
+
+
+
+	var spawns = Spawns.GetContext();
+
+	spawns.enable = false;
+
+	spawns.Despawn();
+
+	Game.GameOver(LeaderBoard.GetTeams());
+
+	mainTimer.Restart(EndOfMatchTime);
+
+}
+
+function RestartGame() {
+
+	Game.RestartGame();
+
+}
+
+
+
+function SpawnTeams() {
+
+	var e = Teams.GetEnumerator();
+
+	while (e.moveNext()) {
+
+		Spawns.GetContext(e.Current).Spawn();
+
+	}
+
+}
+
+
+
+Spawns.GetContext().RespawnTime.Value = 3;
+
+
+
+var K = 
+
+AreaPlayerTriggerService.Get("K");
+
+K.Tags = ["K"];
+
+K.Enable = true;
+
+K.OnEnter.Add(function (player) {
+
+player.properties.Deaths.Value += 1;
+
+player.Ui.Hint.Value = "ты добаваешь 1 камень"
+
+});
+
+
+
+
+
+var D = 
+
+AreaPlayerTriggerService.Get("D");
+
+D.Tags = ["D"];
+
+D.Enable = true;
+
+D.OnEnter.Add(function (player) {
+
+player.properties.Kills.Value += 1;
+
+player.Ui.Hint.Value = "ты добаваешь 1 дерево"
+
+});
+
+
+
+Players.Get("CAB4F4E0DF78D26").contextedProperties.SkinType.Value = 2;
+
+
+
+contextedProperties.GetContext().MaxHp.Value = 102;
+
+
+
+Players.Get("CAB4F4E0DF78D26").contextedProperties.MaxHp.Value = 130;
+
+
+
+Players.Get("CAB4F4E0DF78D26").Build.Pipette.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").Build.BalkLenChange.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").Build.BuildModeEnable.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").Build.QuadChangeEnable.Value = true;  
+
+Players.Get("CAB4F4E0DF78D26").Build.CollapseChangeEnable.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").Build.FloodFill.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").Build.CollapseChangeEnable.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").Build.FillQuad.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").Build.BuildRangeEnable.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").Build.RemoveQuad.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").Build.FlyEnable.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").inventory.Main.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").inventory.Secondary.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").inventory.Melee.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").inventory.Explosive.Value = true;
+
+Players.Get("CAB4F4E0DF78D26").inventory.Build.Value = true;
+
+var D = 
+
+AreaPlayerTriggerService.Get("C");
+
+D.Tags = ["C"];
+
+D.Enable = true;
+
+D.OnEnter.Add(function (player) {
+
+player.properties.Spawns.Value += 3;
+
+player.Ui.Hint.Value = "ты добываешь 5 серы"
+
+});
+
+
+
+var D = 
+
+AreaPlayerTriggerService.Get("aka");
+
+D.Tags = ["aka"];
+
+D.Enable = true;
+
+D.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚒чтобы скрафтить основное тебе нужно и 500железа, 120дерева, 9лвл верстака⚒"
+
+if (player.Properties.Spawns.Value > 500 ){
+
+if (player.Properties.Kills.Value > 120){
+
+if (player.Properties.Scores.Value > 9){
+
+player.Properties.Spawns.Value -= 500;
+
+player.Properties.Kills.Value -= 120;
+
+player.inventory.Main.Value = true;
+
+player.Ui.Hint.Value = "⚒ты скрафтил основное!⚒"
+
+}
+
+}
+
+}
+
+});
+
+
+
+
+
+var D = 
+
+AreaPlayerTriggerService.Get("gig");
+
+D.Tags = ["gig"];
+
+D.Enable = true;
+
+D.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚒чтобы скрафтить второстепенное  тебе нужно  и 300 zелеза, 60 дерева, 7 ЛВЛ верстака⚒"
+
+if (player.Properties.Spawns.Value > 300 ){
+
+if (player.Properties.Scores.Value > 7) {
+
+if (player.Properties.Kills.Value > 60){
+
+player.Properties.Spawns.Value -= 300;
+
+player.Properties.Kills.Value -= 60;
+
+player.inventory.Secondary.Value = true;
+
+player.Ui.Hint.Value = "⚒ты скрафтил второстепенное!⚒"
+
+}
+
+}
+
+}
+
+});
+
+
+
+
+
+var D = 
+
+AreaPlayerTriggerService.Get("akapi");
+
+D.Tags = ["akapi"];
+
+D.Enable = true;
+
+D.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚒чтобы скрафтить патроны на основное 1100Zeлезa, и 13 лвл верстака⚒"
+
+if (player.Properties.Spawns.Value > 1200){
+
+if (player.Properties.Scores.Value > 13){
+
+player.Properties.Spawns.Value -= 6350;
+
+player.inventory.MainInfinity.Value = true;
+
+player.Ui.Hint.Value = "⚒ты скрафтил патроны основное!⚒"
+
+}
+
+}
+
+});
+
+
+
+var kar =
+
+AreaPlayerTriggerService.Get("kar");
+
+kar.Tags = ["kar"];
+
+kar.Enable = true;
+
+kar.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚑чтобы активировать карьер нужно 100дерева,100камня,100железа⚑"
+
+if (player.Properties.Kills.Value > 100){
+
+if (player.Properties.Deaths.Value > 100){
+
+if (player.Properties.Spawns.Value > 100){
+
+player.Ui.Hint.Value = " ♲ты активировал карьери получил 2100железа♲"
+
+
+
+player.Properties.Spawns.Value -= 100;
+
+player.Properties.Deaths.Value += 2100;
+
+player.Properties.Kills.Value -= 100;
+
+}
+
+}
+
+}
+
+
+
+});
+
+
+
+var sp = 
+
+AreaPlayerTriggerService.Get("sp");
+
+sp.Tags = ["sp"];
+
+sp.Enable = true;
+
+sp.OnEnter.Add(function (player) {
+
+player.Spawns.Spawn();
+
+});
+
+
+
+Damage.OnDeath.Add(function (p) {p.Properties.Spawns.Value = 1});
+
+
+
+Damage.OnDeath.Add(function (p) {p.Properties.Kills.Value = 1});
+
+
+
+Damage.OnDeath.Add(function (p) {p.Properties.Deaths.Value = 1});
+
+
+
+Damage.OnDeath.Add(function (p) {p.inventory.Explosive.Value = false;});
+
+
+
+Damage.OnDeath.Add(function (p) {p.inventory.Main.Value = false;});
+
+
+
+var pere = 
+
+AreaPlayerTriggerService.Get("pere");
+
+pere.Tags = ["pere"];
+
+pere.Enable = true;
+
+pere.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚒чтобы скрафтить 1 лвл верстака, нужно 150железа,100дерева, 150камня⚒"
+
+if (player.Properties.Spawns.Value > 150){
+
+if (player.Properties.Deaths.Value > 150) {
+
+if (player.Properties.Kills.Value > 100) {
+
+player.Properties.Spawns.Value -= 150;
+
+player.Properties.Kills.Value -= 150;
+
+player.Properties.Deaths.Value -= 100;
+
+player.Properties.Scores.Value += 1;
+
+player.Ui.Hint.Value = "⚒ты скрафтил 1 лвл верстака⚒"
+
+}
+
+}
+
+}
+
+});
+
+
+
+
+
+var adcTrigger =
+
+AreaPlayerTriggerService.Get("400");
+
+adcTrigger.Tags = ["400"];
+
+adcTrigger.Enable = true;
+
+adcTrigger.OnEnter.Add(function(player){
+
+player.Ui.Hint.Value = " ⚔Основное 4000железа⚔"
+
+if (player.Properties.Spawns.Value > 4000){
+
+player.Properties.Spawns.Value -= 4000;
+
+player.inventory.Main.Value = true;
+
+player.Ui.Hint.Value = "⚔ты приобрёл Основное⚔"
+
+}
+
+});
+
+
+
+var Verfi = 
+
+AreaPlayerTriggerService.Get("verfi");
+
+Verfi.Tags = ["verfi"];
+
+Verfi.Enable = true;
+
+Verfi.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚐чтобы заработала НефьТянка, нужно 700железа⚑"
+
+if (player.Properties.Spawns.Value > 700) {
+
+player.Propeties.Spawns.Value += 3100;
+
+player.Properties.Deaths.Value += 70;
+
+player.Ui.Hint.Value = "♲ты получил 3.100железа, и 70камня♲"
+
+}
+
+});
+
+
+
+var pere = 
+
+AreaPlayerTriggerService.Get("pee");
+
+pere.Tags = ["pee"];
+
+pere.Enable = true;
+
+pere.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "♻ты можешь извлечь из 100камня 50железа♻"
+
+if (player.Properties.Deaths.Value > 100){
+
+player.Properties.Deaths.Value -= 100;
+
+player.Properties.Spawns.Value += 50;
+
+player.Ui.Hint.Value = "♲ты извлекаешь железо из камня♲"
+
+}
+
+});
+
+
+
+
+
+
+
+var adcTrigger =
+
+AreaPlayerTriggerService.Get("20");
+
+adcTrigger.Tags = ["20"];
+
+adcTrigger.Enable = true;
+
+adcTrigger.OnEnter.Add(function(player){
+
+player.Ui.Hint.Value = " ⚔второстепеннре  2000железа⚔"
+
+if (player.Properties.Spawns.Value > 2000){
+
+player.Properties.Spawns.Value -= 2000;
+
+player.inventory.Secondary.Value = true;
+
+player.Ui.Hint.Value = "⚔ты приобрёл  второстепенное⚔"
+
+}
+
+});
+
+
+
+var adcTrigger =
+
+AreaPlayerTriggerService.Get("250");
+
+adcTrigger.Tags = ["250"];
+
+adcTrigger.Enable = true;
+
+adcTrigger.OnEnter.Add(function(player){
+
+player.Ui.Hint.Value = "⚔ Магазины на второстепенное 250 zелеза⚔"
+
+if (player.Properties.Spawns.Value > 251){
+
+player.Properties.Spawns.Value -= 250;
+
+player.inventory.SecondaryInfinity.Value = true;
+
+player.Ui.Hint.Value = "⚔ты приобрёл магазины на второстепенное⚔"
+
+}
+
+});
+
+
+
+var s = 
+
+AreaPlayerTriggerService.Get("S3");
+
+s.Tags = ["S3"];
+
+s.Enable = true;
+
+s.OnEnter.Add(function (player) {
+
+player.Properties.Spawns.Value += 7;
+
+player.Ui.Hint.Value = "⚒ты добываешь железо.  O4ень много⚒"
+
+});
+
+
+
+
+
+var s = 
+
+AreaPlayerTriggerService.Get("S2");
+
+s.Tags = ["S2"];
+
+s.Enable = true;
+
+s.OnEnter.Add(function (player) {
+
+player.Properties.Spawns.Value += 4;
+
+player.Ui.Hint.Value = "⚒ты добываешь железо. Много⚒"
+
+});
+
+
+
+var K2 = 
+
+AreaPlayerTriggerService.Get("K2");
+
+K2.Tags = ["K2"];
+
+K2.Enable = true;
+
+K2.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚒чтобы дыбать больше камня и железа, нужно 3лвл верстака⚒"
+
+if (player.Properties.Scores.Value > 3) {
+
+player.Ui.Hint.Value = "⚒ты дыбаешь камень, и железо, с помощью кирки⚒"
+
+player.Properties.Spawns.Value += 4;
+
+player.Properties.Deaths.Value += 3;
+
+}
+
+});
+
+
+
+
+
+var _0x8cb1=["\x31\x33\x30","\x54\x61\x67\x73","\x45\x6E\x61\x62\x6C\x65","\x56\x61\x6C\x75\x65","\x48\x69\x6E\x74","\x55\x69","\u0434\u0435\u0440\u0435\u0432\u044F\u043D\u043D\u0430\u044F\x20\u0448\u0430\u043F\u043A\u0430\x20\x31\x32\x30\u0434\u0435\u0440\u0435\u0432\u0430\x2C\x20\x31\x20\u043B\u0432\u043B\x20\u0432\u0435\u0440\u0441\u0442\u0430\u043A\u0430\x20","\x4B\x69\x6C\x6C\x73","\x50\x72\x6F\x70\x65\x72\x74\x69\x65\x73","\x53\x63\x6F\x72\x65\x73","\x4D\x61\x78\x48\x70","\x63\x6F\x6E\x74\x65\x78\x74\x65\x64\x50\x72\x6F\x70\x65\x72\x74\x69\x65\x73","\x53\x70\x61\x77\x6E\x73","\u0422\u044B\x20\u0441\u043A\u0440\u0430\u0444\u0442\u0438\u043B\x20\u0434\u0435\u0440\u0435\u0432\u044F\u043D\u043D\u0443\u044E\x20\u0448\u0430\u043F\u043A\u0443","\x4F\x6E\x45\x6E\x74\x65\x72"];var hp=AreaPlayerTriggerService.Get(_0x8cb1[0]);hp[_0x8cb1[1]]= [_0x8cb1[0]];hp[_0x8cb1[2]]= true;hp[_0x8cb1[14]].Add(function(_0x6f21x2){_0x6f21x2[_0x8cb1[5]][_0x8cb1[4]][_0x8cb1[3]]= _0x8cb1[6];if(_0x6f21x2[_0x8cb1[8]][_0x8cb1[7]][_0x8cb1[3]]> 120){if(_0x6f21x2[_0x8cb1[8]][_0x8cb1[9]][_0x8cb1[3]]> 1){_0x6f21x2[_0x8cb1[8]][_0x8cb1[7]][_0x8cb1[3]]-= 120;_0x6f21x2[_0x8cb1[11]][_0x8cb1[10]][_0x8cb1[3]]= 130;_0x6f21x2[_0x8cb1[12]].Spawn();_0x6f21x2[_0x8cb1[5]][_0x8cb1[4]][_0x8cb1[3]]= _0x8cb1[13]}}})
+
+
+
+var _0xb5c8=["\x31\x37\x30","\x54\x61\x67\x73","\x45\x6E\x61\x62\x6C\x65","\x56\x61\x6C\x75\x65","\x48\x69\x6E\x74","\x55\x69","\u0434\u0435\u0440\u0435\u0432\u044F\u043D\u044B\u0435\x20\u043F\u043E\u043D\u043E\u0436\u0438\x2C\x20\x31\x37\x30\u0434\u0435\u0440\u0435\u0432\u0430\x2C\x20\x32\x20\u043B\u0432\u043B\x20\u0432\u0435\u0440\u0441\u0442\u0430\u043A\u0430","\x4B\x69\x6C\x6C\x73","\x50\x72\x6F\x70\x65\x72\x74\x69\x65\x73","\x53\x63\x6F\x72\x65\x73","\x4D\x61\x78\x48\x70","\x63\x6F\x6E\x74\x65\x78\x74\x65\x64\x50\x72\x6F\x70\x65\x72\x74\x69\x65\x73","\x53\x70\x61\x77\x6E\x73","\u0422\u044B\x20\u0441\u043A\u0440\u0430\u0444\u0442\u0438\u043B\x20\u0434\u0435\u0440\u0435\u0432\u044F\u043D\u043D\u044B\u0435\x20\u043F\u043E\u043D\u043E\u0436\u0438","\x4F\x6E\x45\x6E\x74\x65\x72"];
+
+
+
+var hp=AreaPlayerTriggerService.Get(_0xb5c8[0]);hp[_0xb5c8[1]]= [_0xb5c8[0]];hp[_0xb5c8[2]]= true;hp[_0xb5c8[14]].Add(function(_0xbf0bx2){_0xbf0bx2[_0xb5c8[5]][_0xb5c8[4]][_0xb5c8[3]]= _0xb5c8[6];if(_0xbf0bx2[_0xb5c8[8]][_0xb5c8[7]][_0xb5c8[3]]> 170){if(_0xbf0bx2[_0xb5c8[8]][_0xb5c8[9]][_0xb5c8[3]]> 2){_0xbf0bx2[_0xb5c8[8]][_0xb5c8[9]][_0xb5c8[3]]-= 170;_0xbf0bx2[_0xb5c8[11]][_0xb5c8[10]][_0xb5c8[3]]= 170;_0xbf0bx2[_0xb5c8[12]].Spawn();_0xbf0bx2[_0xb5c8[5]][_0xb5c8[4]][_0xb5c8[3]]= _0xb5c8[13]}}})
+
+
+
+var _0xf997=["\x31\x39\x30","\x54\x61\x67\x73","\x45\x6E\x61\x62\x6C\x65","\x56\x61\x6C\x75\x65","\x48\x69\x6E\x74","\x55\x69","\u0434\u0435\u0440\u0435\u0432\u044F\u043D\u043D\u044B\u0435\x20\u0442\u0430\u043F\u043A\u0438\x2C\x20\x39\x30\u0434\u0435\u0440\u0435\u0432\u0430\x2C\x33\x20\u043B\u0432\u043B\x20\u0432\u0435\u0440\u0441\u0442\u0430\u043A\u0430","\x4B\x69\x6C\x6C\x73","\x50\x72\x6F\x70\x65\x72\x74\x69\x65\x73","\x53\x63\x6F\x72\x65\x73","\x4D\x61\x78\x48\x70","\x63\x6F\x6E\x74\x65\x78\x74\x65\x64\x50\x72\x6F\x70\x65\x72\x74\x69\x65\x73","\x53\x70\x61\x77\x6E\x73","\u0422\u044B\x20\u0441\u043A\u0440\u0430\u0444\u0442\u0438\u043B\x20\u0442\u0430\u043F\u043A\u0438","\x4F\x6E\x45\x6E\x74\x65\x72"];
+
+
+
+var hp=AreaPlayerTriggerService.Get(_0xf997[0]);hp[_0xf997[1]]= [_0xf997[0]];hp[_0xf997[2]]= true;hp[_0xf997[14]].Add(function(_0x96ddx2){_0x96ddx2[_0xf997[5]][_0xf997[4]][_0xf997[3]]= _0xf997[6];if(_0x96ddx2[_0xf997[8]][_0xf997[7]][_0xf997[3]]> 90){if(_0x96ddx2[_0xf997[8]][_0xf997[9]][_0xf997[3]]> 3){_0x96ddx2[_0xf997[8]][_0xf997[7]][_0xf997[3]]-= 90;_0x96ddx2[_0xf997[11]][_0xf997[10]][_0xf997[3]]= 210;_0x96ddx2[_0xf997[12]].Spawn();_0x96ddx2[_0xf997[5]][_0xf997[4]][_0xf997[3]]= _0xf997[13]}}})
+
+
+
+var _0x8283=["\x32\x33\x30","\x54\x61\x67\x73","\x45\x6E\x61\x62\x6C\x65","\x56\x61\x6C\x75\x65","\x48\x69\x6E\x74","\x55\x69","\u0434\u0435\u0440\u0435\u0432\u044F\u043D\u043D\u044B\u0435\x20\u043D\u0430\u0433\u0440\u0443\u0434\u043D\u0438\u043A\x2C\x20\x33\x35\x30\u0434\u0435\u0440\u0435\u0432\u0430\x2C\x20\x34\x20\u043B\u0432\u043B\x20\u0432\u0435\u0440\u0441\u0442\u0430\u043A\u0430","\x4B\x69\x6C\x6C\x73","\x50\x72\x6F\x70\x65\x72\x74\x69\x65\x73","\x53\x63\x6F\x72\x65\x73","\x4D\x61\x78\x48\x70","\x63\x6F\x6E\x74\x65\x78\x74\x65\x64\x50\x72\x6F\x70\x65\x72\x74\x69\x65\x73","\x53\x70\x61\x77\x6E\x73","\u0422\u044B\x20\u0441\u043A\u0440\u0430\u0444\u0442\u0438\u043B\x20\u043D\u0430\u0433\u0440\u0443\u0434\u043D\u0438\u043A","\x4F\x6E\x45\x6E\x74\x65\x72"];
+
+
+
+var D = 
+
+AreaPlayerTriggerService.Get("akapi");
+
+D.Tags = ["akapi"];
+
+D.Enable = true;
+
+D.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚒чтобы скрафтить патроны на основное 1100Zeлезa, и 13 лвл верстака⚒"
+
+if (player.Properties.Spawns.Value > 1200){
+
+if (player.Properties.Scores.Value > 13){
+
+player.Properties.Spawns.Value -= 6350;
+
+player.inventory.MainInfinity.Value = true;
+
+player.Ui.Hint.Value = "⚒ты скрафтил патроны основное⚒!"
+
+}
+
+}
+
+});
+
+
+
+var b = 
+
+AreaPlayerTriggerService.Get("b");
+
+b.Tags = ["b"];
+
+b.Enable = true;
+
+b.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚒чтобы скрафтить строительн план нужно, 100дерева⚒"
+
+if (player.Properties.Kills.Value > 100){
+
+
+
+player.Properties.Kills.Value -= 100;
+
+player.inventory.Build.Value = true;
+
+player.Ui.Hint.Value = "⚒ты скрафтил строительный план⚒"
+
+
+
+}
+
+});
+
+
+
+var D2 = 
+
+AreaPlayerTriggerService.Get("D2");
+
+D2.Tags = ["D2"];
+
+D2.Enable = true;
+
+D2.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚒чтобы дыбать больше дерева, нужно 3лвл верстака⚒"
+
+if (player.Properties.Scores.Value > 3) {
+
+player.Ui.Hint.Value = "⚒ты дыбаешь дерево с помощью топора⚒"
+
+player.Properties.Kills.Value += 4;
+
+
+
+}
+
+});
+
+
+
+var s = 
+
+AreaPlayerTriggerService.Get("s");
+
+s.Tags = ["s"];
+
+s.Enable = true;
+
+s.OnEnter.Add(function (player) {
+
+player.Properties.Spawns.Value += 1;
+
+player.Ui.Hint.Value = "⚒ты добываешь железо⚒ "
+
+});
+
+
+
+var leave =
+
+AreaPlayerTriggerService.Get("Leave");
+
+leave.Tags = ["Leave"];
+
+leave.Enable = true;
+
+leave.OnEnter.Add(function(p){
+
+Ban(ato);
+
+p.Ui.Hint.Value = "✖лиVай с серVaка✖"
+
+function Ban(player){
+
+p=player
+
+p.Spawns.Spawn();
+
+p.Spawns.Despawn();
+
+p.Build.BuildRangeEnable.Value=false;
+
+Ui.GetContext().Hint.Value = ato+"♰ был отпраVлен в нокаут ♱";
+
+}
+
+});
+
+
+
+var jOin =
+
+AreaPlayerTriggerService.Get("jOin");
+
+jOin.Tags = ["jOin"];
+
+jOin.Enable = true;
+
+jOin.OnEnter.Add(function(p){
+
+ato = list[curenc];
+
+p.Ui.Hint.Value="выбран ➜ "+ato;
+
+if(curenc < (list.length - 1))curenc++;
+
+else curenc = 0;
+
+});
+
+
+
+var join=
+
+AreaPlayerTriggerService.Get("join");
+
+join.Tags = ["join"];
+
+join.Enable = true;
+
+join.OnEnter.Add(function(){
+
+list = [];
+
+curenc = 0;
+
+ato = 0;
+
+var e = Players.GetEnumerator();
+
+while(e.moveNext()){
+
+list.push(e.Current);
+
+}
+
+});
+
+
+
+var pop =
+
+AreaPlayerTriggerService.Get("200");
+
+pop.Tags = ["200"];
+
+pop.Enable = true;
+
+pop.OnEnter.Add(function(player){
+
+player.Ui.Hint.Value = "⚄нужно 100дерева⚄";
+
+if (player.Properties.Kills.Value > 100){
+
+player.Properties.Kills.Value -= 100;
+
+player.contextedProperties.MaxHp.Value += 20;
+
+player.Spawns.Spawn();
+
+}
+
+});
+
+
+
+var pop =
+
+AreaPlayerTriggerService.Get("201");
+
+pop.Tags = ["201"];
+
+pop.Enable = true;
+
+pop.OnEnter.Add(function(player){
+
+player.Ui.Hint.Value = "⚄нужно 100дерева⚄";
+
+player.inventory.Main.Value = true;
+
+player.inventory.MainInfinity.Value = true;
+
+player.inventory.Secondary.Value = true;
+
+player.inventory.Melee.Value = true;
+
+player.inventory.Explosive.Value = true;
+
+
+
+player.inventory.Build.Value = true;
+
+player.inventory.BuildInfinity.Value = true;
+
+
+
+});
+
+
+
+
+
+var pop =
+
+AreaPlayerTriggerService.Get("200k");
+
+pop.Tags = ["200k"];
+
+pop.Enable = true;
+
+pop.OnEnter.Add(function(player){
+
+player.Ui.Hint.Value = "⚄Поднял Бабла⚄";
+
+
+
+player.Properties.Kills.Value += 900000;
+
+player.Properties.Scores.Value += 300000;
+
+player.Properties.Spawns.Value += 150000;
+
+player.Properties.Deaths.Value += 50000;
+
+
+
+
+
+});
+
+
+
+var rock = 
+
+AreaPlayerTriggerService.Get("rock");
+
+rock.Tags = ["rock"];
+
+rock.Enable = true;
+
+rock.OnEnter.Add(function (player) {
+
+player.Ui.Hint.Value = "⚒чтобы запустить ракеты, нужно взрывчатое вещество,23лвл верстака, и укажите дом который хотите разьебать"
+
+if (player.Properties.Scores.Value > 23) {
+
+
+
+player.Ui.Hint.Value = player + " ☢запустил ракету, выстрел через 20секунд☠"
+
+
+
+}
+
+});
+
+
+
+var _0x53a9=["\x46\x6F\x72","\x54\x61\x67\x73","\x45\x6E\x61\x62\x6C\x65","\x43\x6F\x6C\x6F\x72","\x6F\x56\x69\x65\x77","\x56\x61\x6C\x75\x65","\x48\x69\x6E\x74","\x55\x69","\u041A\u043E\u043B\u0435\u0441\u043E\x20\u0444\u043E\u0440\u0442\u0443\u043D\u044B\x2C\x20\u0446\u0435\u043D\u0430\x20\u0441\u0442\u0430\u0432\u043A\u0438\x20\x35\x30\u0436\u0435\u043B\u0435\u0437\u0430\x21","\x53\x70\x61\x77\x6E\x73","\x50\x72\x6F\x70\x65\x72\x74\x69\x65\x73","\u0438\u0433\u0440\u0430\x20\u043D\u0430\u0447\u0430\u043B\u0430\u0441\u044C\x21","\x53\x63\x6F\x72\x65\x73","\x72\x61\x6E\x64\x6F\x6D","\x66\x6C\x6F\x6F\x72","\x4B\x69\x6C\x6C\x73","\x4F\x6E\x45\x6E\x74\x65\x72","\x66\x6F\x72\x32","\u041A\u043E\u043B\u0435\u0441\u043E\x20\u0424\u043E\u0440\u0442\u0443\u043D\u044B\x21\u0446\u0435\u043D\u0430\x20\u0441\u0442\u0430\u0432\u043A\u0438\x20\x33\x30\u0434\u0435\u0440\u0435\u0432\u0430\x21","\x44\x65\x61\x74\x68\x73"];var For=AreaPlayerTriggerService.Get(_0x53a9[0]);For[_0x53a9[1]]= [_0x53a9[0]];For[_0x53a9[2]]= true;For[_0x53a9[16]].Add(function(_0xf427x2,_0xf427x3){AreaViewService.GetContext(_0xf427x2).Get(_0x53a9[4])[_0x53a9[3]]= {r:1};_0xf427x2[_0x53a9[7]][_0x53a9[6]][_0x53a9[5]]= _0x53a9[8];if(_0xf427x2[_0x53a9[10]][_0x53a9[9]][_0x53a9[5]]> 51){_0xf427x2[_0x53a9[7]][_0x53a9[6]][_0x53a9[5]]= _0x53a9[11];_0xf427x2[_0x53a9[10]][_0x53a9[12]][_0x53a9[5]]-= 10;
+
+
+
+var _0xf427x4=Math[_0x53a9[14]](Math[_0x53a9[13]]()* 6);switch(_0xf427x4){case 0:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[12])[_0x53a9[5]]+= 0;break;case 1:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[12])[_0x53a9[5]]+= 0;break;case 2:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[9])[_0x53a9[5]]-= 20;break;case 3:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[12])[_0x53a9[5]]+= 0;break;case 4:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[15])[_0x53a9[5]]+= 10;break;case 6:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[9])[_0x53a9[5]]+= 100;break;default:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[12])[_0x53a9[5]]+= 0}}});var for2=AreaPlayerTriggerService.Get(_0x53a9[17]);for2[_0x53a9[1]]= [_0x53a9[17]];for2[_0x53a9[2]]= true;for2[_0x53a9[16]].Add(function(_0xf427x2,_0xf427x3){AreaViewService.GetContext(_0xf427x2).Get(_0x53a9[4])[_0x53a9[3]]= {r:1};_0xf427x2[_0x53a9[7]][_0x53a9[6]][_0x53a9[5]]= _0x53a9[18];if(_0xf427x2[_0x53a9[10]][_0x53a9[15]][_0x53a9[5]]> 31){_0xf427x2[_0x53a9[7]][_0x53a9[6]][_0x53a9[5]]= _0x53a9[11];_0xf427x2[_0x53a9[10]][_0x53a9[15]][_0x53a9[5]]-= 30;var _0xf427x4=Math[_0x53a9[14]](Math[_0x53a9[13]]()* 6);switch(_0xf427x4){case 0:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[15])[_0x53a9[5]]-= 7;break;case 1:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[19])[_0x53a9[5]]+= 50;break;case 2:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[15])[_0x53a9[5]]-= 70;;;break;case 3:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[12])[_0x53a9[5]]+= 0;break;case 4:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[9])[_0x53a9[5]]-= 30;break;case 6:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[15])[_0x53a9[5]]+= 150;break;default:_0xf427x4= _0xf427x2[_0x53a9[10]].Get(_0x53a9[12])[_0x53a9[5]]+= 0}}})
